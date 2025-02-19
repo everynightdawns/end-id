@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef } from 'react';
-import { Camera } from 'lucide-react';
+import { Camera, X } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -18,17 +18,25 @@ interface ComfyResponse {
 }
 
 const ImageProcessor = () => {
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [previewFile, setPreviewFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState('');
   const [resultImage, setResultImage] = useState('');
   const [isCameraActive, setIsCameraActive] = useState(false);
+  const [workflowStatus, setWorkflowStatus] = useState<string>('');
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
-      await processImage(file);
+      const imageUrl = URL.createObjectURL(file);
+      setPreviewImage(imageUrl);
+      setPreviewFile(file);
+      setError('');
+      setResultImage('');
+      setWorkflowStatus('');
     }
   };
 
@@ -40,6 +48,11 @@ const ImageProcessor = () => {
       }
       streamRef.current = stream;
       setIsCameraActive(true);
+      setPreviewImage(null);
+      setPreviewFile(null);
+      setError('');
+      setResultImage('');
+      setWorkflowStatus('');
     } catch (err) {
       setError('Failed to access camera');
     }
@@ -59,7 +72,11 @@ const ImageProcessor = () => {
     const file = new File([blob], 'capture.jpg', { type: 'image/jpeg' });
     
     stopCamera();
-    await processImage(file);
+    setPreviewImage(URL.createObjectURL(blob));
+    setPreviewFile(file);
+    setError('');
+    setResultImage('');
+    setWorkflowStatus('');
   };
 
   const stopCamera = () => {
@@ -69,16 +86,27 @@ const ImageProcessor = () => {
     }
   };
 
-  const processImage = async (file: File) => {
+  const clearImage = () => {
+    setPreviewImage(null);
+    setPreviewFile(null);
+    setError('');
+    setResultImage('');
+    setWorkflowStatus('');
+  };
+
+  const processImage = async () => {
+    if (!previewFile) return;
+    
     setIsProcessing(true);
     setError('');
     setResultImage('');
+    setWorkflowStatus('queueing');
     
     try {
       // Upload image
       const uploadFormData = new FormData();
       uploadFormData.append('action', 'upload');
-      uploadFormData.append('image', file);
+      uploadFormData.append('image', previewFile);
       
       const uploadResponse = await fetch('/api/comfyui', {
         method: 'POST',
@@ -119,6 +147,7 @@ const ImageProcessor = () => {
         });
         
         const statusData: ComfyResponse = await statusResponse.json();
+        setWorkflowStatus(statusData.status || '');
         
         if (statusData.status === 'failed') {
           throw new Error(statusData.error || 'Processing failed');
@@ -149,9 +178,35 @@ const ImageProcessor = () => {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to process image');
+      setWorkflowStatus('failed');
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  const getStatusMessage = () => {
+    switch (workflowStatus) {
+      case 'queueing':
+        return 'Queued for processing...';
+      case 'processing':
+        return 'Processing image...';
+      case 'failed':
+        return 'Processing failed. Please try again.';
+      case 'done':
+        return 'Processing completed successfully!';
+      default:
+        return '';
+    }
+  };
+
+  const getButtonLabel = () => {
+    if (isProcessing) {
+      return workflowStatus === 'queueing' ? 'Queued...' : 'Processing...';
+    }
+    if (workflowStatus === 'failed' || workflowStatus === 'done') {
+      return 'Retry';
+    }
+    return 'Start';
   };
 
   return (
@@ -191,16 +246,37 @@ const ImageProcessor = () => {
             />
           )}
 
-          {isProcessing && (
-            <div className="flex items-center justify-center p-4">
-              <div className="w-8 h-8 border-4 border-t-blue-500 rounded-full animate-spin" />
-              <span className="ml-2">Processing...</span>
+          {previewImage && (
+            <div className="relative">
+              <Button 
+                variant="destructive" 
+                size="icon"
+                className="absolute -top-2 -right-2 rounded-full z-10"
+                onClick={clearImage}
+              >
+                <X className="w-4 h-4" />
+              </Button>
+              <img
+                src={previewImage}
+                alt="Preview"
+                className="w-full rounded-lg shadow-lg"
+              />
             </div>
           )}
 
-          {error && (
-            <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
+          {previewFile && (
+            <Button
+              onClick={processImage}
+              disabled={isProcessing}
+              className="w-full"
+            >
+              {getButtonLabel()}
+            </Button>
+          )}
+
+          {workflowStatus && (
+            <Alert variant={workflowStatus === 'failed' ? 'destructive' : 'default'}>
+              <AlertDescription>{getStatusMessage()}</AlertDescription>
             </Alert>
           )}
 
